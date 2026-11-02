@@ -1,5 +1,4 @@
-fastapi==0.111.0
-pandas==2.2.2
-numpy==1.26.4
-requests==2.32.3
-vnstock3==0.2.9
+fastapi
+pandas
+numpy
+requests
