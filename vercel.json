@@ -16,5 +16,11 @@
     "api/index.py": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron-email",
+      "schedule": "5 8 * * 1-5"
+    }
+  ]
 }
