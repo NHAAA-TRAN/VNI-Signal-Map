@@ -31,8 +31,8 @@ CRON_SECRET = os.getenv("CRON_SECRET", "")
 # Bộ nhớ đệm (In-Memory Cache)
 CACHE = {"timestamp": 0, "data": None}
 
-# Biến chống gửi email trùng lặp (Anti-Duplicate Cache)
-LAST_EMAIL_SENT_TIMESTAMP = 0
+# Biến lưu ngày đã gửi email gần nhất (Chống spam tuyệt đối trong cùng 1 ngày)
+LAST_SENT_DATE = ""
 
 
 # =====================================================================
@@ -209,7 +209,7 @@ def scan_market_data(force: bool = False) -> dict:
 
 
 # =====================================================================
-# 4. API DỮ LIỆU VÀ GỬI EMAIL CHỐNG DUPLICATE (LÚC 16:00)
+# 4. API DỮ LIỆU VÀ GỬI EMAIL CHỐNG SPAM THEO NGÀY (LÚC 16:00)
 # =====================================================================
 @app.get("/api/signals")
 def api_get_signals(force: bool = Query(False)):
@@ -292,14 +292,16 @@ def build_email_html(data: dict, app_url: str) -> str:
 
 @app.get("/api/cron-email")
 def trigger_email_report(request: Request):
-    global LAST_EMAIL_SENT_TIMESTAMP
+    global LAST_SENT_DATE
     
-    # Chống gửi email trùng lặp trong vòng 10 phút
-    current_ts = time.time()
-    if current_ts - LAST_EMAIL_SENT_TIMESTAMP < 600:
+    vn_now = get_vn_time()
+    today_str = vn_now.strftime("%Y-%m-%d")
+    
+    # CHẶN SPAM TRIỆT ĐỂ: Nếu hôm nay đã gửi mail rồi thì từ chối ngay lập tức
+    if today_str == LAST_SENT_DATE:
         return JSONResponse({
             "status": "ignored",
-            "message": "Đã chặn yêu cầu gửi trùng lặp (Email cho phiên này đã được gửi cách đây chưa lâu)."
+            "message": f"Đã chặn spam: Báo cáo cho ngày {today_str} đã được gửi trước đó."
         }, status_code=200)
 
     if CRON_SECRET:
@@ -339,10 +341,10 @@ def trigger_email_report(request: Request):
     )
 
     if res.status_code in (200, 201):
-        LAST_EMAIL_SENT_TIMESTAMP = time.time()
+        LAST_SENT_DATE = today_str
         return JSONResponse({
             "status": "success", 
-            "message": f"Đã gửi báo cáo thành công lúc 16:00 tới {EMAIL_TO}", 
+            "message": f"Đã gửi báo cáo duy nhất cho ngày {today_str} tới {EMAIL_TO}", 
             "resend_id": res.json().get("id")
         })
     
