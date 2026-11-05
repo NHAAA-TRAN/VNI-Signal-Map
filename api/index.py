@@ -14,11 +14,8 @@ app = FastAPI(title="VN-INDEX MA10-MA20 Signal Map & Auto Email")
 # 1. CẤU HÌNH DANH MỤC QUÉT & BIẾN MÔI TRƯỜNG (VERCEL ENV)
 # =====================================================================
 WATCHLIST = [
-    # Nhóm ưu tiên theo dõi sát
     "TCH", "VIX", "FRT", "STB", "GEX", "MBS", "EIB", "ACB", "PNJ", "VCB", "VPB",
-    # Chứng khoán & Ngân hàng mở rộng
     "SSI", "VND", "HCM", "VCI", "FTS", "BSI", "CTG", "BID", "MBB", "TCB", "HDB",
-    # Bất động sản, Thép, Bán lẻ, Khu công nghiệp, Dầu khí
     "DIG", "PDR", "DXG", "KDH", "NLG", "NVL", "HPG", "HSG", "NKG",
     "MWG", "DGW", "FPT", "CTR", "GMD", "HAH", "PVD", "PVS", "KBC", "IDC", "SZC"
 ]
@@ -28,11 +25,7 @@ EMAIL_TO = os.getenv("EMAIL_TO", "email_cua_ban@gmail.com")
 EMAIL_FROM = os.getenv("EMAIL_FROM", "VNIndex Signal <onboarding@resend.dev>")
 CRON_SECRET = os.getenv("CRON_SECRET", "")
 
-# Bộ nhớ đệm (In-Memory Cache)
 CACHE = {"timestamp": 0, "data": None}
-
-# Biến lưu mốc thời gian (timestamp) của lần gửi email thành công gần nhất để chống spam (Cooldown 20 tiếng)
-LAST_SENT_EPOCH = 0
 
 
 # =====================================================================
@@ -59,7 +52,7 @@ def get_intraday_vol_multiplier(vn_now: datetime) -> tuple[float, str]:
         mult = max(1.0, 225.0 / elapsed)
         status = "🔥 GIỜ VÀNG TRƯỚC ATC" if hm >= 1410 else "Live Phiên Chiều"
         return round(mult, 2), f"{status} (Hệ số Vol x{mult:.2f})"
-    elif 1430 < hm <= 1445:
+    elif 1430 <= hm <= 1445:
         return 1.0, "Đang khớp lệnh ATC (14:30 - 14:45)"
     else:
         return 1.0, "Chốt Phiên Chính Thức (Sau 15:00)"
@@ -106,7 +99,6 @@ def analyze_ticker(symbol: str, vol_mult: float) -> dict | None:
         df['Room_To_MA20_Pct'] = (df['MA20'] - df['Close']) / df['Close'] * 100
         ma20_flat_or_up = df['MA20'] >= df['MA20'].shift(2) * 0.997
 
-        # Quy tắc 4 tín hiệu
         reject_at_ma20 = (
             (df['MA10'] < df['MA20']) &
             (df['High'] >= df['MA20'] * 0.985) &
@@ -209,7 +201,7 @@ def scan_market_data(force: bool = False) -> dict:
 
 
 # =====================================================================
-# 4. API DỮ LIỆU VÀ GỬI EMAIL CHỐNG SPAM (COOLDOWN 20 TIẾNG)
+# 4. API DỮ LIỆU VÀ GỬI EMAIL THỦ CÔNG (ĐÃ TẮT TỰ ĐỘNG SPAM CRON)
 # =====================================================================
 @app.get("/api/signals")
 def api_get_signals(force: bool = Query(False)):
@@ -292,23 +284,7 @@ def build_email_html(data: dict, app_url: str) -> str:
 
 @app.get("/api/cron-email")
 def trigger_email_report(request: Request):
-    global LAST_SENT_EPOCH
-    
-    current_ts = time.time()
-    is_manual_trigger = request.headers.get("referer") is not None or "force" in str(request.url)
-    
-    # CHẶN SPAM TRIỆT ĐỂ: Nếu chưa đủ khoảng cách 20 tiếng (72000 giây) kể từ lần gửi trước, từ chối ngay lập tức
-    if not is_manual_trigger and (current_ts - LAST_SENT_EPOCH < 72000):
-        return JSONResponse({
-            "status": "ignored",
-            "message": "Đã chặn spam: Chưa đủ khoảng cách thời gian 20 tiếng kể từ lần gửi gần nhất."
-        }, status_code=200)
-
-    if CRON_SECRET:
-        auth_header = request.headers.get("Authorization")
-        if auth_header != f"Bearer {CRON_SECRET}":
-            return JSONResponse({"status": "error", "message": "Unauthorized Cron"}, status_code=401)
-
+    # Nút bấm thủ công hoặc trigger từ xa qua nút Gửi Mail Ngay trên web
     if not RESEND_API_KEY:
         return JSONResponse({
             "status": "error",
@@ -342,7 +318,6 @@ def trigger_email_report(request: Request):
     )
 
     if res.status_code in (200, 201):
-        LAST_SENT_EPOCH = time.time()
         return JSONResponse({
             "status": "success", 
             "message": f"Đã gửi báo cáo thành công lúc {vn_now.strftime('%H:%M:%S %d/%m/%Y')} tới {EMAIL_TO}", 
