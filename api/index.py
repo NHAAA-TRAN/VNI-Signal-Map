@@ -31,8 +31,8 @@ CRON_SECRET = os.getenv("CRON_SECRET", "")
 # Bộ nhớ đệm (In-Memory Cache)
 CACHE = {"timestamp": 0, "data": None}
 
-# Biến lưu ngày đã gửi email gần nhất (Chống spam tuyệt đối trong cùng 1 ngày)
-LAST_SENT_DATE = ""
+# Biến lưu mốc thời gian (timestamp) của lần gửi email thành công gần nhất để chống spam (Cooldown 20 tiếng)
+LAST_SENT_EPOCH = 0
 
 
 # =====================================================================
@@ -209,7 +209,7 @@ def scan_market_data(force: bool = False) -> dict:
 
 
 # =====================================================================
-# 4. API DỮ LIỆU VÀ GỬI EMAIL CHỐNG SPAM THEO NGÀY (LÚC 16:00)
+# 4. API DỮ LIỆU VÀ GỬI EMAIL CHỐNG SPAM (COOLDOWN 20 TIẾNG)
 # =====================================================================
 @app.get("/api/signals")
 def api_get_signals(force: bool = Query(False)):
@@ -292,16 +292,16 @@ def build_email_html(data: dict, app_url: str) -> str:
 
 @app.get("/api/cron-email")
 def trigger_email_report(request: Request):
-    global LAST_SENT_DATE
+    global LAST_SENT_EPOCH
     
-    vn_now = get_vn_time()
-    today_str = vn_now.strftime("%Y-%m-%d")
+    current_ts = time.time()
+    is_manual_trigger = request.headers.get("referer") is not None or "force" in str(request.url)
     
-    # CHẶN SPAM TRIỆT ĐỂ: Nếu hôm nay đã gửi mail rồi thì từ chối ngay lập tức
-    if today_str == LAST_SENT_DATE:
+    # CHẶN SPAM TRIỆT ĐỂ: Nếu chưa đủ khoảng cách 20 tiếng (72000 giây) kể từ lần gửi trước, từ chối ngay lập tức
+    if not is_manual_trigger and (current_ts - LAST_SENT_EPOCH < 72000):
         return JSONResponse({
             "status": "ignored",
-            "message": f"Đã chặn spam: Báo cáo cho ngày {today_str} đã được gửi trước đó."
+            "message": "Đã chặn spam: Chưa đủ khoảng cách thời gian 20 tiếng kể từ lần gửi gần nhất."
         }, status_code=200)
 
     if CRON_SECRET:
@@ -323,7 +323,8 @@ def trigger_email_report(request: Request):
     cnt_tplus = sum(1 for s in data["stocks"] if s["signal"] == "Mua lướt T+ MA")
     cnt_fail = sum(1 for s in data["stocks"] if s["signal"] == "Hồi thất bại")
 
-    subject = f"[VN-INDEX {data['updated_at'][-10:]}] 🟢 {cnt_test} Mua Test | 🔵 {cnt_tplus} Lướt T+ | 🔴 {cnt_fail} Hồi Thất Bại"
+    vn_now = get_vn_time()
+    subject = f"[VN-INDEX {vn_now.strftime('%d/%m/%Y')}] 🟢 {cnt_test} Mua Test | 🔵 {cnt_tplus} Lướt T+ | 🔴 {cnt_fail} Hồi Thất Bại"
 
     res = requests.post(
         "https://api.resend.com/emails",
@@ -341,10 +342,10 @@ def trigger_email_report(request: Request):
     )
 
     if res.status_code in (200, 201):
-        LAST_SENT_DATE = today_str
+        LAST_SENT_EPOCH = time.time()
         return JSONResponse({
             "status": "success", 
-            "message": f"Đã gửi báo cáo duy nhất cho ngày {today_str} tới {EMAIL_TO}", 
+            "message": f"Đã gửi báo cáo thành công lúc {vn_now.strftime('%H:%M:%S %d/%m/%Y')} tới {EMAIL_TO}", 
             "resend_id": res.json().get("id")
         })
     
